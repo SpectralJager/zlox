@@ -2,11 +2,21 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const out = std.io.getStdOut().writer();
 
+const InterpreterErrors = error{
+    InterpreterCompilerError,
+    InterpreterRuntimeError,
+};
+
 const Opcode = enum(u8) {
     const Self = @This();
 
     OP_RETURN,
     OP_CONST,
+    OP_NEGATE,
+    OP_ADD,
+    OP_SUB,
+    OP_MUL,
+    OP_DIV,
 
     pub fn toString(self: Self) []const u8 {
         return @tagName(self);
@@ -88,7 +98,7 @@ pub fn Chunk() type {
             const byte = self.code.items[offset];
             const instruction = @as(Opcode, @enumFromInt(byte));
             switch (instruction) {
-                Opcode.OP_RETURN => {
+                Opcode.OP_RETURN, Opcode.OP_NEGATE, Opcode.OP_ADD, Opcode.OP_SUB, Opcode.OP_MUL, Opcode.OP_DIV => {
                     try out.print(" {s}\n", .{instruction.toString()});
                     return offset + 1;
                 },
@@ -105,9 +115,114 @@ pub fn Chunk() type {
     };
 }
 
+pub fn VM() type {
+    return struct {
+        const Self = @This();
+
+        chunks: std.ArrayList(Chunk()),
+        currentChunk: u64,
+
+        stack: std.ArrayList(Value),
+
+        ip: u64,
+
+        allocator: Allocator,
+
+        pub fn init(allocator: Allocator) Self {
+            return Self{
+                .allocator = allocator,
+                .chunks = std.ArrayList(Chunk()).init(allocator),
+                .stack = std.ArrayList(Value).init(allocator),
+                .currentChunk = 0,
+                .ip = 0,
+            };
+        }
+        pub fn deinit(self: *Self) void {
+            self.chunks.deinit();
+            self.stack.deinit();
+        }
+        pub fn trace(self: *Self) !void {
+            try out.print("=== Stack ===\n", .{});
+            for (self.stack.items, 0..) |item, i| {
+                try out.print("{d:0>8} ", .{i});
+                try item.print();
+                try out.print("\n", .{});
+            }
+            try out.print("\n", .{});
+        }
+        pub fn pushValue(self: *Self, value: Value) !void {
+            try self.stack.append(value);
+        }
+        pub fn popValue(self: *Self) !Value {
+            return self.stack.pop();
+        }
+        pub fn readByte(self: *Self) u8 {
+            const code = self.chunks.items[self.currentChunk].code.items[self.ip];
+            self.ip += 1;
+            return code;
+        }
+        pub fn readConst(self: *Self) Value {
+            const arg = self.readByte();
+            return self.chunks.items[self.currentChunk].pool.items[arg];
+        }
+        pub fn interpret(self: *Self, chunk: Chunk()) !void {
+            self.currentChunk = self.chunks.items.len;
+            self.ip = 0;
+            try self.chunks.append(chunk);
+
+            return self.run();
+        }
+        pub fn run(self: *Self) !void {
+            var instruction: u8 = undefined;
+            while (true) {
+                instruction = self.readByte();
+                switch (@as(Opcode, @enumFromInt(instruction))) {
+                    Opcode.OP_RETURN => {
+                        const val = try self.popValue();
+                        try val.print();
+                        try out.print("\n", .{});
+                        return;
+                    },
+                    Opcode.OP_CONST => {
+                        const value = self.readConst();
+                        try self.pushValue(value);
+                    },
+                    Opcode.OP_NEGATE => {
+                        const value = try self.popValue();
+                        try self.pushValue(.{ .int = -value.int });
+                    },
+                    Opcode.OP_ADD => {
+                        const a = try self.popValue();
+                        const b = try self.popValue();
+                        try self.pushValue(.{ .int = a.int + b.int });
+                    },
+                    Opcode.OP_SUB => {
+                        const a = try self.popValue();
+                        const b = try self.popValue();
+                        try self.pushValue(.{ .int = a.int - b.int });
+                    },
+                    Opcode.OP_DIV => {
+                        const a = try self.popValue();
+                        const b = try self.popValue();
+                        try self.pushValue(.{ .int = @divTrunc(a.int, b.int) });
+                    },
+                    Opcode.OP_MUL => {
+                        const a = try self.popValue();
+                        const b = try self.popValue();
+                        try self.pushValue(.{ .int = a.int * b.int });
+                    },
+                }
+            }
+        }
+    };
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
+
+    var vm = VM().init(allocator);
+    defer vm.deinit();
 
     var chunk = Chunk().init(allocator, "main");
     defer chunk.deinit();
@@ -116,7 +231,15 @@ pub fn main() !void {
     try chunk.writeByte(
         try chunk.addConstant(Value{ .int = 10 }),
     );
+    try chunk.writeOpcode(Opcode.OP_CONST);
+    try chunk.writeByte(
+        try chunk.addConstant(Value{ .int = 10 }),
+    );
+    try chunk.writeOpcode(Opcode.OP_ADD);
     try chunk.writeOpcode(Opcode.OP_RETURN);
 
     try chunk.disassembly();
+
+    try vm.interpret(chunk);
+    try vm.trace();
 }
