@@ -217,6 +217,40 @@ pub fn VM() type {
     };
 }
 
+const Token = union(enum) {};
+
+pub fn Compiler() type {
+    return struct {
+        const Self = @This();
+
+        fn compile(src: []const u8) !void {
+            _ = src;
+        }
+    };
+}
+
+pub fn Scanner() type {
+    return struct {
+        const Self = @This();
+
+        buff: std.ArrayList(u8),
+        tokens: std.ArrayList(Token),
+        line: i64,
+
+        fn init(allocator: Allocator) Self {
+            return .{
+                .buff = std.ArrayList(u8).init(allocator),
+                .tokens = std.ArrayList(Token).init(allocator),
+                .line = 0,
+            };
+        }
+        fn scanString(self: Self, src: []const u8) std.ArrayList(Token) {
+            while (self.buff.re)
+                return self.tokens;
+        }
+    };
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
